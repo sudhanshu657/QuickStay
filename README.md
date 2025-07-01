@@ -1,4 +1,5 @@
-quickstay-git-main-sudhanshu-kumar-singhs-projects-5373ec35.vercel.app
+`quickstay-git-main-sudhanshu-kumar-singhs-projects-5373ec35.vercel.app`
+
 # 🏨 Quickstay – Hotel Booking Web Application
 
 Quickstay is a full-stack hotel booking platform built using the MERN stack (MongoDB, Express.js, React, Node.js).
@@ -26,10 +27,3 @@ Admins can add new hotel rooms and manage all bookings through a dedicated dashb
 
 
 
-
-## ⚙️ Setup Instructions
-
-1. **Clone the repository**
-```bash
-git clone https://github.com/yourusername/quickstay.git
-cd quickstay
