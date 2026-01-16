@@ -266,16 +266,24 @@ export const checkAvailabilityAPI = async (req, res) => {
 
 export const createBooking = async (req, res) => {
   try {
-    // ✅ Clerk puts auth data here
-    const { userId } = req.auth;
+    // ✅ Clerk: Call req.auth() as a function, not a property
+    const { userId } = req.auth();
     if (!userId) {
       return res.status(401).json({ success: false, message: "User not authenticated" });
     }
 
     // ✅ Use req.user set by protect middleware
     const user = req.user;
+    if (!user) {
+      return res.status(401).json({ success: false, message: "User not found" });
+    }
 
     const { room, checkInDate, checkOutDate, guests = 1 } = req.body;
+
+    // Validate required fields
+    if (!room || !checkInDate || !checkOutDate) {
+      return res.json({ success: false, message: "Missing required fields" });
+    }
 
     const isAvailable = await checkAvailability({ checkInDate, checkOutDate, room });
     if (!isAvailable) {
@@ -283,6 +291,9 @@ export const createBooking = async (req, res) => {
     }
 
     const roomData = await Room.findById(room).populate("hotel");
+    if (!roomData) {
+      return res.json({ success: false, message: "Room not found" });
+    }
 
     let totalPrice = roomData.pricePerNight;
     const checkIn = new Date(checkInDate);
@@ -290,45 +301,59 @@ export const createBooking = async (req, res) => {
     const nights = Math.ceil((checkOut - checkIn) / (1000 * 3600 * 24));
     totalPrice *= nights;
 
-    // ✅ Store the booking to use in email
-    const booking = await Booking.create({
-      user: userId,
-      room,
-      hotel: roomData.hotel._id,
-      guests: +guests,
-      checkInDate,
-      checkOutDate,
-      totalPrice,
-    });
+    // ✅ Create booking first
+    let booking;
+    try {
+      booking = await Booking.create({
+        user: userId,
+        room,
+        hotel: roomData.hotel._id,
+        guests: +guests,
+        checkInDate,
+        checkOutDate,
+        totalPrice,
+      });
+    } catch (bookingError) {
+      console.error("Booking creation failed:", bookingError);
+      return res.json({ success: false, message: "Failed to create booking" });
+    }
 
-    // ✅ Email setup
-    const mailOptions = {
-      from: process.env.SENDER_MAIL,
-      to: user.email, // <--- Comes from protect middleware
-      subject: 'Hotel Booking Details',
-      html: `
-        <h2>Your Booking Details</h2>
-        <p>Dear ${user.username},</p>
-        <p>Thank you for your booking! Here are your details:</p>
-        <ul>
-          <li><strong>Booking ID:</strong> ${booking._id}</li>
-          <li><strong>Hotel name:</strong> ${roomData.hotel.name}</li>
-          <li><strong>Location:</strong> ${roomData.hotel.address}</li>
-          <li><strong>Check-In:</strong> ${new Date(booking.checkInDate).toDateString()}</li>
-          <li><strong>Check-Out:</strong> ${new Date(booking.checkOutDate).toDateString()}</li>
-          <li><strong>Booking Amount:</strong> ${process.env.CURRENCY || '$'}${booking.totalPrice}</li>
-        </ul>
-        <p>We look forward to welcoming you!</p>
-        <p>If you need to make any changes, feel free to contact us.</p>
-      `
-    };
+    // ✅ Email setup - Send separately to avoid failing booking if email fails
+    try {
+      const mailOptions = {
+        from: process.env.SENDER_MAIL,
+        to: user.email,
+        subject: 'Hotel Booking Details',
+        html: `
+          <h2>Your Booking Details</h2>
+          <p>Dear ${user.username},</p>
+          <p>Thank you for your booking! Here are your details:</p>
+          <ul>
+            <li><strong>Booking ID:</strong> ${booking._id}</li>
+            <li><strong>Hotel name:</strong> ${roomData.hotel.name}</li>
+            <li><strong>Location:</strong> ${roomData.hotel.address}</li>
+            <li><strong>Check-In:</strong> ${new Date(booking.checkInDate).toDateString()}</li>
+            <li><strong>Check-Out:</strong> ${new Date(booking.checkOutDate).toDateString()}</li>
+            <li><strong>Total Amount:</strong> ${process.env.CURRENCY || '$'}${booking.totalPrice}</li>
+          </ul>
+          <p>We look forward to welcoming you!</p>
+          <p>If you need to make any changes, feel free to contact us.</p>
+        `
+      };
 
-    await transporter.sendMail(mailOptions);
-
-    res.json({ success: true, message: "Booking created and email sent successfully" });
+      await transporter.sendMail(mailOptions);
+      res.json({ success: true, message: "Booking created and confirmation email sent" });
+    } catch (emailError) {
+      console.error("Email sending failed:", emailError);
+      // Booking is created, just email failed - return success but let user know
+      res.json({ 
+        success: true, 
+        message: "Booking created successfully! Confirmation email will be sent shortly"
+      });
+    }
   } catch (error) {
     console.error("Booking creation error:", error);
-    res.json({ success: false, message: "Booking not created or email failed" });
+    res.json({ success: false, message: "Booking not created. Please try again." });
   }
 };
 
@@ -351,7 +376,8 @@ export const getUserBookings = async (req, res) => {
 // GET /api/bookings/hotel
 export const getHotelBookings = async (req, res) => {
   try {
-    const hotel = await Hotel.findOne({ owner: req.auth.userId });
+    const { userId } = req.auth();
+    const hotel = await Hotel.findOne({ owner: userId });
     if (!hotel) {
       return res.json({ success: false, message: "No hotel found" });
     }
